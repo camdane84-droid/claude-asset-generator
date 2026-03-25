@@ -1,0 +1,1315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Asset Generator</title>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+        }
+    }
+    </script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* Left Panel - Controls */
+        #panel {
+            width: 320px;
+            min-width: 320px;
+            background: #16213e;
+            border-right: 1px solid #0f3460;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        #panel h1 {
+            font-size: 18px;
+            padding: 20px;
+            background: #0f3460;
+            border-bottom: 1px solid #533483;
+            text-align: center;
+            letter-spacing: 1px;
+        }
+
+        .section {
+            padding: 16px 20px;
+            border-bottom: 1px solid #0f3460;
+        }
+
+        .section-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: #888;
+            margin-bottom: 12px;
+        }
+
+        /* File Upload */
+        #drop-zone {
+            border: 2px dashed #533483;
+            border-radius: 8px;
+            padding: 24px 16px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: rgba(83, 52, 131, 0.1);
+        }
+        #drop-zone:hover, #drop-zone.drag-over {
+            border-color: #e94560;
+            background: rgba(233, 69, 96, 0.1);
+        }
+        #drop-zone p { font-size: 13px; color: #aaa; }
+        #drop-zone .icon { font-size: 32px; margin-bottom: 8px; }
+        #file-input { display: none; }
+
+        #preview-container {
+            margin-top: 12px;
+            display: none;
+            text-align: center;
+            background: #111;
+            border-radius: 8px;
+            padding: 12px;
+        }
+        #preview-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #4CAF50;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        #preview-wrapper {
+            position: relative;
+            display: inline-block;
+            cursor: crosshair;
+        }
+        #preview-img {
+            max-width: 100%;
+            max-height: 200px;
+            border-radius: 6px;
+            border: 1px solid #333;
+            object-fit: contain;
+            background: #000;
+            display: block;
+        }
+        #base-point-marker {
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #e94560;
+            border-radius: 50%;
+            background: rgba(233, 69, 96, 0.4);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            display: none;
+            box-shadow: 0 0 8px rgba(233, 69, 96, 0.6);
+        }
+        #base-point-marker::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 4px;
+            background: #e94560;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+        #base-point-hint {
+            font-size: 10px;
+            color: #888;
+            margin-top: 4px;
+        }
+        #base-point-hint .set {
+            color: #e94560;
+        }
+        #file-name {
+            font-size: 12px;
+            color: #aaa;
+            margin-top: 6px;
+            word-break: break-all;
+        }
+        #change-file {
+            display: inline-block;
+            margin-top: 8px;
+            font-size: 11px;
+            color: #e94560;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+        #change-file:hover { color: #ff6b81; }
+
+        /* Quality Selector */
+        .quality-options {
+            display: flex;
+            gap: 8px;
+        }
+        .quality-btn {
+            flex: 1;
+            padding: 10px 8px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #1a1a2e;
+            color: #ccc;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s;
+            font-size: 12px;
+        }
+        .quality-btn:hover { border-color: #533483; }
+        .quality-btn.active {
+            border-color: #e94560;
+            background: rgba(233, 69, 96, 0.15);
+            color: #fff;
+        }
+        .quality-btn .label { font-weight: 600; display: block; }
+        .quality-btn .detail {
+            font-size: 10px;
+            color: #888;
+            margin-top: 4px;
+            display: block;
+        }
+        .quality-btn.active .detail { color: #e94560; }
+
+        /* Buttons */
+        .btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            letter-spacing: 0.5px;
+        }
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #e94560, #533483);
+            color: white;
+        }
+        .btn-primary:hover:not(:disabled) {
+            background: linear-gradient(135deg, #ff6b81, #6c44a2);
+            transform: translateY(-1px);
+        }
+        .btn-secondary {
+            background: #0f3460;
+            color: #ccc;
+            border: 1px solid #333;
+        }
+        .btn-secondary:hover:not(:disabled) {
+            background: #1a4a7a;
+            color: #fff;
+        }
+
+        /* Progress */
+        #progress-bar {
+            display: none;
+            margin-top: 12px;
+        }
+        #progress-bar .bar-bg {
+            height: 4px;
+            background: #333;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        #progress-bar .bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #e94560, #533483);
+            border-radius: 2px;
+            animation: progress-pulse 1.5s ease-in-out infinite;
+            width: 40%;
+        }
+        @keyframes progress-pulse {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
+        }
+        #progress-text {
+            font-size: 12px;
+            color: #aaa;
+            margin-top: 8px;
+            text-align: center;
+        }
+
+        /* Mesh Stats */
+        #mesh-stats {
+            display: none;
+        }
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            font-size: 13px;
+        }
+        .stat-label { color: #888; }
+        .stat-value { color: #e94560; font-weight: 600; }
+
+        /* Export */
+        #export-section { display: none; }
+        .export-options {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .export-btn {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #1a1a2e;
+            color: #ccc;
+            cursor: pointer;
+            text-align: center;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+        .export-btn:hover {
+            border-color: #533483;
+            color: #fff;
+        }
+
+        /* Viewport */
+        #viewport {
+            flex: 1;
+            position: relative;
+            background: #0a0a0a;
+        }
+        #viewport canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+        #viewport-hint {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #444;
+        }
+        #viewport-hint .icon { font-size: 64px; }
+        #viewport-hint p { margin-top: 12px; font-size: 14px; }
+
+        /* Viewport Controls */
+        #viewport-controls {
+            position: absolute;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 8px;
+            background: rgba(0,0,0,0.6);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 11px;
+            color: #888;
+        }
+        #viewport-controls span { white-space: nowrap; }
+
+        /* Toggle wireframe / solid */
+        #view-mode-toggle {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            display: flex;
+            gap: 4px;
+            background: rgba(0,0,0,0.6);
+            padding: 4px;
+            border-radius: 6px;
+        }
+        .view-mode-btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            background: transparent;
+            color: #888;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .view-mode-btn.active {
+            background: #533483;
+            color: #fff;
+        }
+
+        /* Snap Controls */
+        #snap-controls {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            display: flex;
+            gap: 4px;
+            background: rgba(0,0,0,0.6);
+            padding: 4px;
+            border-radius: 6px;
+        }
+        .snap-btn {
+            padding: 6px 10px;
+            border: none;
+            border-radius: 4px;
+            background: transparent;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+            transition: background 0.15s;
+        }
+        .snap-btn:hover {
+            background: rgba(255,255,255,0.1);
+        }
+
+        /* Mesh Chat */
+        #chat-section { display: none; }
+        #chat-log {
+            max-height: 200px;
+            overflow-y: auto;
+            margin-bottom: 10px;
+            font-size: 12px;
+            border: 1px solid #222;
+            border-radius: 6px;
+            background: #0a0a14;
+            padding: 8px;
+        }
+        #chat-log:empty::before {
+            content: "Type a command to modify the mesh...";
+            color: #444;
+            font-style: italic;
+        }
+        .chat-msg {
+            margin-bottom: 6px;
+            line-height: 1.4;
+        }
+        .chat-msg.user { color: #e94560; }
+        .chat-msg.user::before { content: "> "; color: #666; }
+        .chat-msg.system { color: #6c8; }
+        .chat-msg.system::before { content: "  "; }
+        .chat-msg.error { color: #f66; }
+        .chat-msg.error::before { content: "  "; }
+        #chat-input-row {
+            display: flex;
+            gap: 6px;
+        }
+        #chat-input {
+            flex: 1;
+            padding: 8px 10px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #0a0a14;
+            color: #e0e0e0;
+            font-size: 13px;
+            font-family: inherit;
+            outline: none;
+        }
+        #chat-input:focus { border-color: #533483; }
+        #chat-input::placeholder { color: #444; }
+        #chat-send {
+            padding: 8px 14px;
+            border: none;
+            border-radius: 6px;
+            background: #533483;
+            color: #fff;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        #chat-send:hover { background: #6c44a2; }
+        #chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
+        .chat-help {
+            font-size: 10px;
+            color: #555;
+            margin-top: 8px;
+            line-height: 1.5;
+        }
+        .chat-help code {
+            background: #1a1a2e;
+            padding: 1px 4px;
+            border-radius: 3px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+
+<!-- Left Panel -->
+<div id="panel">
+    <h1>3D ASSET GENERATOR</h1>
+
+    <!-- Upload Section -->
+    <div class="section">
+        <div class="section-title">Input Image</div>
+        <div id="drop-zone" onclick="document.getElementById('file-input').click()">
+            <div class="icon">+</div>
+            <p>Drop image here or click to browse</p>
+        </div>
+        <input type="file" id="file-input" accept="image/*">
+        <div id="preview-container">
+            <div id="preview-label">Uploaded</div>
+            <div id="preview-wrapper">
+                <img id="preview-img" alt="Preview">
+                <div id="base-point-marker"></div>
+            </div>
+            <div id="base-point-hint">Click image to set base point (bottom of object)</div>
+            <div id="file-name"></div>
+            <span id="change-file" onclick="resetUpload()">Change image</span>
+        </div>
+    </div>
+
+    <!-- Quality Section -->
+    <div class="section">
+        <div class="section-title">Mesh Quality</div>
+        <div class="quality-options">
+            <div class="quality-btn" data-quality="low" onclick="setQuality('low')">
+                <span class="label">Low</span>
+                <span class="detail">~10K tris</span>
+            </div>
+            <div class="quality-btn active" data-quality="medium" onclick="setQuality('medium')">
+                <span class="label">Medium</span>
+                <span class="detail">~25K tris</span>
+            </div>
+            <div class="quality-btn" data-quality="high" onclick="setQuality('high')">
+                <span class="label">High</span>
+                <span class="detail">~100K+ tris</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Generate Section -->
+    <div class="section">
+        <button id="generate-btn" class="btn btn-primary" onclick="generateMesh()" disabled>
+            Generate Mesh
+        </button>
+        <div id="progress-bar">
+            <div class="bar-bg"><div class="bar-fill"></div></div>
+            <div id="progress-text">Starting...</div>
+        </div>
+    </div>
+
+    <!-- Stats Section -->
+    <div class="section" id="mesh-stats">
+        <div class="section-title">Mesh Info</div>
+        <div class="stat-row">
+            <span class="stat-label">Vertices</span>
+            <span class="stat-value" id="stat-verts">-</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Faces</span>
+            <span class="stat-value" id="stat-faces">-</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Time</span>
+            <span class="stat-value" id="stat-time">-</span>
+        </div>
+    </div>
+
+    <!-- Export Section -->
+    <div class="section" id="export-section">
+        <div class="section-title">Export</div>
+        <div class="export-options">
+            <div class="export-btn" onclick="exportMesh('obj')">OBJ</div>
+            <div class="export-btn" onclick="exportMesh('glb')">GLB</div>
+            <div class="export-btn" onclick="exportMesh('stl')">STL</div>
+            <div class="export-btn" onclick="exportMesh('ply')">PLY</div>
+        </div>
+        <button id="asset-btn" class="btn btn-secondary" onclick="makeAsset()">
+            Make into 3D Asset
+        </button>
+    </div>
+
+    <!-- Mesh Edit Chat -->
+    <div class="section" id="chat-section">
+        <div class="section-title">Edit Mesh</div>
+        <div id="chat-log"></div>
+        <div id="chat-input-row">
+            <input type="text" id="chat-input" placeholder="e.g. smooth 3"
+                   onkeydown="if(event.key==='Enter')sendChat()">
+            <button id="chat-send" onclick="sendChat()">Go</button>
+        </div>
+        <div class="chat-help">
+            <code>smooth [n]</code> <code>subdivide</code> <code>scale 1.5</code>
+            <code>scale y 2</code> <code>rotate x 45</code> <code>mirror x</code>
+            <code>remesh</code> <code>undo</code>
+        </div>
+    </div>
+</div>
+
+<!-- 3D Viewport -->
+<div id="viewport">
+    <div id="viewport-hint">
+        <div class="icon">&#x25A2;</div>
+        <p>Upload an image and generate a mesh<br>to see it here</p>
+    </div>
+    <div id="view-mode-toggle" style="display:none;">
+        <button class="view-mode-btn active" onclick="setViewMode('solid')">Solid</button>
+        <button class="view-mode-btn" onclick="setViewMode('wireframe')">Wire</button>
+        <button class="view-mode-btn" onclick="setViewMode('both')">Both</button>
+    </div>
+    <div id="snap-controls">
+        <button class="snap-btn" style="color:#ff4444;" onclick="snapToPlane('front')">Front</button>
+        <button class="snap-btn" style="color:#44ff44;" onclick="snapToPlane('top')">Top</button>
+        <button class="snap-btn" style="color:#4488ff;" onclick="snapToPlane('right')">Right</button>
+        <button class="snap-btn" style="color:#ccc;" onclick="snapToPlane('perspective')">Persp</button>
+    </div>
+    <div id="viewport-controls" style="display:none;">
+        <span>Left-drag: Rotate</span>
+        <span>|</span>
+        <span>Right-drag: Pan</span>
+        <span>|</span>
+        <span>Scroll: Zoom</span>
+    </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// ── Three.js Scene Setup ────────────────────────────────
+let scene, camera, renderer, controls;
+let currentMesh = null;
+let wireframeMesh = null;
+
+// ── Particle System ─────────────────────────────────────
+let particles = null;
+let particlePositions, particleTargets, particleScattered;
+let particleColors;
+let isAnimatingParticles = false;
+const PARTICLE_COUNT = 2000;
+const CYCLE_DURATION = 3.0; // seconds per assemble/scatter cycle
+
+function createParticles() {
+    const geo = new THREE.BufferGeometry();
+    particlePositions = new Float32Array(PARTICLE_COUNT * 3);
+    particleTargets = new Float32Array(PARTICLE_COUNT * 3);
+    particleScattered = new Float32Array(PARTICLE_COUNT * 3);
+    particleColors = new Float32Array(PARTICLE_COUNT * 3);
+
+    // Target shape: a human-ish silhouette using layered spheres
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        const i3 = i * 3;
+
+        // Pick a shape target — weighted mix of head, torso, limbs
+        let tx, ty, tz;
+        const r = Math.random();
+        if (r < 0.15) {
+            // Head
+            const a = Math.random() * Math.PI * 2;
+            const b = Math.acos(2 * Math.random() - 1);
+            const rad = 0.18 * Math.cbrt(Math.random());
+            tx = Math.sin(b) * Math.cos(a) * rad;
+            ty = 0.75 + Math.sin(b) * Math.sin(a) * rad;
+            tz = Math.cos(b) * rad;
+        } else if (r < 0.55) {
+            // Torso
+            tx = (Math.random() - 0.5) * 0.45;
+            ty = (Math.random()) * 0.6 + 0.05;
+            tz = (Math.random() - 0.5) * 0.25;
+        } else if (r < 0.75) {
+            // Left arm
+            tx = -0.25 - Math.random() * 0.35;
+            ty = 0.15 + Math.random() * 0.45;
+            tz = (Math.random() - 0.5) * 0.12;
+        } else if (r < 0.95) {
+            // Right arm
+            tx = 0.25 + Math.random() * 0.35;
+            ty = 0.15 + Math.random() * 0.45;
+            tz = (Math.random() - 0.5) * 0.12;
+        } else {
+            // Legs
+            tx = (Math.random() - 0.5) * 0.3;
+            ty = -0.55 + Math.random() * 0.55;
+            tz = (Math.random() - 0.5) * 0.15;
+        }
+        particleTargets[i3] = tx;
+        particleTargets[i3 + 1] = ty;
+        particleTargets[i3 + 2] = tz;
+
+        // Scattered positions — random in a sphere
+        const sa = Math.random() * Math.PI * 2;
+        const sb = Math.acos(2 * Math.random() - 1);
+        const sr = 1.5 + Math.random() * 2.0;
+        particleScattered[i3] = Math.sin(sb) * Math.cos(sa) * sr;
+        particleScattered[i3 + 1] = Math.sin(sb) * Math.sin(sa) * sr;
+        particleScattered[i3 + 2] = Math.cos(sb) * sr;
+
+        // Start scattered
+        particlePositions[i3] = particleScattered[i3];
+        particlePositions[i3 + 1] = particleScattered[i3 + 1];
+        particlePositions[i3 + 2] = particleScattered[i3 + 2];
+
+        // Colors — gradient from cyan to magenta
+        const t = i / PARTICLE_COUNT;
+        particleColors[i3] = 0.3 + t * 0.6;       // R
+        particleColors[i3 + 1] = 0.6 - t * 0.3;   // G
+        particleColors[i3 + 2] = 0.9;              // B
+    }
+
+    geo.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(particleColors, 3));
+
+    const mat = new THREE.PointsMaterial({
+        size: 0.02,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.85,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+    });
+
+    particles = new THREE.Points(geo, mat);
+    particles.visible = false;
+    scene.add(particles);
+}
+
+function updateParticles(time) {
+    if (!particles || !isAnimatingParticles) return;
+
+    const cycle = time % (CYCLE_DURATION * 2);
+    const assembling = cycle < CYCLE_DURATION;
+    const progress = assembling
+        ? cycle / CYCLE_DURATION
+        : (cycle - CYCLE_DURATION) / CYCLE_DURATION;
+
+    // Smooth easing
+    const ease = progress < 0.5
+        ? 4 * progress * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        const i3 = i * 3;
+        // Stagger each particle slightly for a wave effect
+        const stagger = (i / PARTICLE_COUNT) * 0.3;
+        const p = Math.max(0, Math.min(1, (ease - stagger) / (1 - stagger)));
+
+        if (assembling) {
+            particlePositions[i3] = particleScattered[i3] + (particleTargets[i3] - particleScattered[i3]) * p;
+            particlePositions[i3+1] = particleScattered[i3+1] + (particleTargets[i3+1] - particleScattered[i3+1]) * p;
+            particlePositions[i3+2] = particleScattered[i3+2] + (particleTargets[i3+2] - particleScattered[i3+2]) * p;
+        } else {
+            particlePositions[i3] = particleTargets[i3] + (particleScattered[i3] - particleTargets[i3]) * p;
+            particlePositions[i3+1] = particleTargets[i3+1] + (particleScattered[i3+1] - particleTargets[i3+1]) * p;
+            particlePositions[i3+2] = particleTargets[i3+2] + (particleScattered[i3+2] - particleTargets[i3+2]) * p;
+        }
+    }
+
+    particles.geometry.attributes.position.needsUpdate = true;
+    // Slowly rotate the whole thing
+    particles.rotation.y = time * 0.15;
+}
+
+function showParticles() {
+    if (particles) {
+        particles.visible = true;
+        isAnimatingParticles = true;
+    }
+    document.getElementById('viewport-hint').style.display = 'none';
+}
+
+function hideParticles() {
+    isAnimatingParticles = false;
+    if (particles) particles.visible = false;
+}
+
+// ── Scene Init ──────────────────────────────────────────
+function initScene() {
+    const container = document.getElementById('viewport');
+
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0d0d0d);
+
+    // Grid at origin
+    const grid = new THREE.GridHelper(4, 20, 0x222233, 0x181825);
+    scene.add(grid);
+
+    // ── Axis Gizmo ──────────────────────────────────────
+    const axisLength = 2.0;
+    const axisGroup = new THREE.Group();
+
+    // X axis — Red
+    const xMat = new THREE.LineBasicMaterial({ color: 0xff4444, linewidth: 2 });
+    const xGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0), new THREE.Vector3(axisLength, 0, 0)
+    ]);
+    axisGroup.add(new THREE.Line(xGeo, xMat));
+
+    // Y axis — Green
+    const yMat = new THREE.LineBasicMaterial({ color: 0x44ff44, linewidth: 2 });
+    const yGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, axisLength, 0)
+    ]);
+    axisGroup.add(new THREE.Line(yGeo, yMat));
+
+    // Z axis — Blue
+    const zMat = new THREE.LineBasicMaterial({ color: 0x4488ff, linewidth: 2 });
+    const zGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, axisLength)
+    ]);
+    axisGroup.add(new THREE.Line(zGeo, zMat));
+
+    // Axis labels (small cones at tips)
+    const coneGeo = new THREE.ConeGeometry(0.04, 0.12, 8);
+    const xCone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color: 0xff4444 }));
+    xCone.position.set(axisLength, 0, 0);
+    xCone.rotation.z = -Math.PI / 2;
+    axisGroup.add(xCone);
+
+    const yCone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color: 0x44ff44 }));
+    yCone.position.set(0, axisLength, 0);
+    axisGroup.add(yCone);
+
+    const zCone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color: 0x4488ff }));
+    zCone.position.set(0, 0, axisLength);
+    zCone.rotation.x = Math.PI / 2;
+    axisGroup.add(zCone);
+
+    scene.add(axisGroup);
+
+    // Camera
+    camera = new THREE.PerspectiveCamera(
+        45,
+        container.clientWidth / container.clientHeight,
+        0.01,
+        100
+    );
+    camera.position.set(0, 0.5, 3);
+
+    // Renderer
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
+    container.appendChild(renderer.domElement);
+
+    // Controls
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.target.set(0, 0, 0);
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+
+    const dirLight1 = new THREE.DirectionalLight(0xffffff, 1.0);
+    dirLight1.position.set(2, 3, 2);
+    scene.add(dirLight1);
+
+    const dirLight2 = new THREE.DirectionalLight(0x8888ff, 0.4);
+    dirLight2.position.set(-2, 1, -1);
+    scene.add(dirLight2);
+
+    const dirLight3 = new THREE.DirectionalLight(0xff8888, 0.3);
+    dirLight3.position.set(0, -1, 2);
+    scene.add(dirLight3);
+
+    // Create particle system
+    createParticles();
+
+    // Resize handler
+    window.addEventListener('resize', () => {
+        camera.aspect = container.clientWidth / container.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(container.clientWidth, container.clientHeight);
+    });
+
+    animate();
+}
+
+const clock = new THREE.Clock();
+function animate() {
+    requestAnimationFrame(animate);
+    const elapsed = clock.getElapsedTime();
+    updateParticles(elapsed);
+    controls.update();
+    renderer.render(scene, camera);
+}
+
+let modelGroup = null; // holds both solid + wireframe together
+
+function loadGLB(url) {
+    const loader = new GLTFLoader();
+
+    // Remove old
+    if (modelGroup) { scene.remove(modelGroup); modelGroup = null; }
+    currentMesh = null;
+    wireframeMesh = null;
+
+    loader.load(url, (gltf) => {
+        const model = gltf.scene;
+
+        // Force update all world matrices
+        model.updateMatrixWorld(true);
+
+        // Collect all mesh geometries, bake their world transforms
+        const meshes = [];
+        model.traverse((child) => {
+            if (child.isMesh) {
+                // Clone geometry and apply the child's world matrix
+                const geo = child.geometry.clone();
+                geo.applyMatrix4(child.matrixWorld);
+                meshes.push({ geometry: geo, material: child.material });
+            }
+        });
+
+        if (meshes.length === 0) return;
+
+        // Merge into one geometry for consistent handling
+        // (use first mesh for simplicity — TripoSR outputs single mesh)
+        const mainGeo = meshes[0].geometry;
+
+        // Compute bounding box, center at origin
+        mainGeo.computeBoundingBox();
+        const box = mainGeo.boundingBox;
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const scaleFactor = 2.0 / maxDim;
+
+        // Translate geometry so center is at origin, then scale
+        mainGeo.translate(-center.x, -center.y, -center.z);
+        mainGeo.scale(scaleFactor, scaleFactor, scaleFactor);
+
+        // Create the group that holds everything at 0,0,0
+        modelGroup = new THREE.Group();
+        modelGroup.position.set(0, 0, 0);
+
+        // ── Solid mesh ──────────────────────────────────
+        // Use the material from the GLB if it has a texture (from our
+        // bake step), otherwise fall back to vertex colors or gray.
+        const loadedMat = meshes[0].material;
+        let solidMat;
+
+        if (loadedMat && loadedMat.map) {
+            // GLB has a baked texture — use it directly
+            solidMat = loadedMat.clone();
+            solidMat.side = THREE.DoubleSide;
+            solidMat.metalness = 0.1;
+            solidMat.roughness = 0.7;
+        } else if (mainGeo.attributes.color) {
+            solidMat = new THREE.MeshStandardMaterial({
+                vertexColors: true,
+                metalness: 0.1,
+                roughness: 0.7,
+                side: THREE.DoubleSide,
+            });
+        } else {
+            solidMat = new THREE.MeshStandardMaterial({
+                color: 0x888888,
+                metalness: 0.1,
+                roughness: 0.7,
+                side: THREE.DoubleSide,
+            });
+        }
+        mainGeo.computeVertexNormals();
+        const solidMesh = new THREE.Mesh(mainGeo, solidMat);
+        currentMesh = solidMesh;
+        modelGroup.add(solidMesh);
+
+        // ── Wireframe — same geometry, guaranteed aligned ──
+        const wireGeo = new THREE.WireframeGeometry(mainGeo);
+        const wireMat = new THREE.LineBasicMaterial({
+            color: 0x533483,
+            opacity: 0.3,
+            transparent: true,
+        });
+        wireframeMesh = new THREE.LineSegments(wireGeo, wireMat);
+        wireframeMesh.visible = false; // start with solid view
+        modelGroup.add(wireframeMesh);
+
+        scene.add(modelGroup);
+
+        // Reset camera to look at origin
+        controls.target.set(0, 0, 0);
+        camera.position.set(0, 0.5, 2.5);
+        controls.update();
+
+        // Show viewport controls
+        document.getElementById('viewport-hint').style.display = 'none';
+        document.getElementById('view-mode-toggle').style.display = 'flex';
+        document.getElementById('snap-controls').style.display = 'flex';
+        document.getElementById('viewport-controls').style.display = 'flex';
+    },
+    undefined,
+    (error) => {
+        console.error('Error loading GLB:', error);
+    });
+}
+
+// ── View Modes ──────────────────────────────────────────
+window.setViewMode = function(mode) {
+    document.querySelectorAll('.view-mode-btn').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+
+    if (currentMesh) {
+        currentMesh.visible = (mode === 'solid' || mode === 'both');
+    }
+    if (wireframeMesh) {
+        wireframeMesh.visible = (mode === 'wireframe' || mode === 'both');
+    }
+};
+
+// ── Plane Snap ──────────────────────────────────────────
+function snapToPlane(view) {
+    const dist = 2.5;
+    const target = new THREE.Vector3(0, 0, 0);
+    let pos;
+
+    switch (view) {
+        case 'front':
+            pos = new THREE.Vector3(0, 0, dist);
+            break;
+        case 'top':
+            pos = new THREE.Vector3(0, dist, 0.001); // tiny offset to avoid gimbal lock
+            break;
+        case 'right':
+            pos = new THREE.Vector3(dist, 0, 0);
+            break;
+        case 'perspective':
+        default:
+            pos = new THREE.Vector3(1.2, 0.8, 2.0);
+            break;
+    }
+
+    // Animate the camera to the new position
+    const startPos = camera.position.clone();
+    const startTarget = controls.target.clone();
+    const duration = 400; // ms
+    const startTime = performance.now();
+
+    function animateSnap(now) {
+        const elapsed = now - startTime;
+        const t = Math.min(1, elapsed / duration);
+        // Smooth ease-out
+        const ease = 1 - Math.pow(1 - t, 3);
+
+        camera.position.lerpVectors(startPos, pos, ease);
+        controls.target.lerpVectors(startTarget, target, ease);
+        controls.update();
+
+        if (t < 1) requestAnimationFrame(animateSnap);
+    }
+    requestAnimationFrame(animateSnap);
+}
+
+// Expose to global scope
+window.loadGLB = loadGLB;
+window.showParticles = showParticles;
+window.hideParticles = hideParticles;
+window.snapToPlane = snapToPlane;
+
+// Init
+initScene();
+</script>
+
+<script>
+// ── App State ───────────────────────────────────────────
+let uploadedFilename = null;
+let selectedQuality = 'medium';
+let currentResult = null;
+let basePoint = null; // {x: 0-1, y: 0-1} normalized coords on image
+
+// ── File Upload ─────────────────────────────────────────
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+});
+dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('drag-over');
+});
+dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length > 0) {
+        handleFile(e.dataTransfer.files[0]);
+    }
+});
+fileInput.addEventListener('change', () => {
+    if (fileInput.files.length > 0) {
+        handleFile(fileInput.files[0]);
+    }
+});
+
+async function handleFile(file) {
+    // Show preview, hide drop zone
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        document.getElementById('preview-img').src = e.target.result;
+        document.getElementById('preview-container').style.display = 'block';
+        document.getElementById('drop-zone').style.display = 'none';
+        document.getElementById('file-name').textContent = file.name;
+    };
+    reader.readAsDataURL(file);
+
+    // Upload to server
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const resp = await fetch('/api/upload', { method: 'POST', body: formData });
+        const data = await resp.json();
+        uploadedFilename = data.filename;
+        document.getElementById('generate-btn').disabled = false;
+    } catch (err) {
+        alert('Upload failed: ' + err.message);
+    }
+}
+
+window.resetUpload = function() {
+    document.getElementById('drop-zone').style.display = 'block';
+    document.getElementById('preview-container').style.display = 'none';
+    document.getElementById('generate-btn').disabled = true;
+    document.getElementById('file-input').value = '';
+    uploadedFilename = null;
+    basePoint = null;
+    document.getElementById('base-point-marker').style.display = 'none';
+    document.getElementById('base-point-hint').innerHTML =
+        'Click image to set base point (bottom of object)';
+};
+
+// Base point click handler
+document.getElementById('preview-wrapper').addEventListener('click', function(e) {
+    const img = document.getElementById('preview-img');
+    const rect = img.getBoundingClientRect();
+    // Normalized 0-1 coordinates on the image
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    basePoint = { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
+
+    // Show marker
+    const marker = document.getElementById('base-point-marker');
+    marker.style.display = 'block';
+    marker.style.left = (x * 100) + '%';
+    marker.style.top = (y * 100) + '%';
+
+    document.getElementById('base-point-hint').innerHTML =
+        '<span class="set">Base point set</span> — click to reposition';
+});
+
+// ── Quality Selection ───────────────────────────────────
+window.setQuality = function(q) {
+    selectedQuality = q;
+    document.querySelectorAll('.quality-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.quality === q);
+    });
+};
+
+// ── Generate Mesh ───────────────────────────────────────
+window.generateMesh = async function() {
+    if (!uploadedFilename) return;
+
+    const btn = document.getElementById('generate-btn');
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+
+    const progressBar = document.getElementById('progress-bar');
+    const progressText = document.getElementById('progress-text');
+    progressBar.style.display = 'block';
+    progressText.textContent = 'Starting...';
+
+    // Hide previous results, show particle animation
+    document.getElementById('mesh-stats').style.display = 'none';
+    document.getElementById('export-section').style.display = 'none';
+    window.showParticles();
+
+    try {
+        const resp = await fetch('/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                filename: uploadedFilename,
+                quality: selectedQuality,
+                base_point: basePoint,
+            }),
+        });
+        const data = await resp.json();
+        const jobId = data.job_id;
+
+        let lastProgressiveVersion = 0;
+
+        // Poll for status + progressive meshes
+        const poll = setInterval(async () => {
+            const statusResp = await fetch(`/api/job/${jobId}`);
+            const status = await statusResp.json();
+
+            progressText.textContent = status.progress;
+
+            // Check for new progressive mesh
+            if (status.progressive_version > lastProgressiveVersion) {
+                const latest = status.progressive[status.progressive.length - 1];
+                lastProgressiveVersion = status.progressive_version;
+
+                // Hide particles, load the progressive mesh
+                window.hideParticles();
+                window.loadGLB(latest.glb_url + '?t=' + Date.now());
+
+                // Update stats live
+                document.getElementById('mesh-stats').style.display = 'block';
+                document.getElementById('stat-verts').textContent =
+                    latest.vertices.toLocaleString() + (status.status !== 'done' ? ' (refining...)' : '');
+                document.getElementById('stat-faces').textContent =
+                    latest.faces.toLocaleString();
+                document.getElementById('stat-time').textContent = '...';
+            }
+
+            if (status.status === 'done') {
+                clearInterval(poll);
+                onGenerationComplete(status.result);
+            } else if (status.status === 'error') {
+                clearInterval(poll);
+                window.hideParticles();
+                btn.disabled = false;
+                btn.textContent = 'Generate Mesh';
+                progressBar.style.display = 'none';
+                alert('Generation failed: ' + status.progress);
+            }
+        }, 1500);
+    } catch (err) {
+        btn.disabled = false;
+        btn.textContent = 'Generate Mesh';
+        progressBar.style.display = 'none';
+        alert('Error: ' + err.message);
+    }
+};
+
+function onGenerationComplete(result) {
+    currentResult = result;
+
+    // Stop particles
+    window.hideParticles();
+
+    // Update UI
+    document.getElementById('generate-btn').disabled = false;
+    document.getElementById('generate-btn').textContent = 'Generate Mesh';
+    document.getElementById('progress-bar').style.display = 'none';
+
+    // Show stats
+    document.getElementById('mesh-stats').style.display = 'block';
+    document.getElementById('stat-verts').textContent = result.vertices.toLocaleString();
+    document.getElementById('stat-faces').textContent = result.faces.toLocaleString();
+    document.getElementById('stat-time').textContent = result.elapsed + 's';
+
+    // Show export section + chat
+    document.getElementById('export-section').style.display = 'block';
+    document.getElementById('chat-section').style.display = 'block';
+
+    // Load mesh in viewer
+    window.loadGLB(result.glb_url + '?t=' + Date.now());
+}
+
+// ── Export ───────────────────────────────────────────────
+window.exportMesh = async function(format) {
+    if (!currentResult) return;
+
+    try {
+        const resp = await fetch('/api/export', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                glb_path: currentResult.glb_path,
+                format: format,
+            }),
+        });
+        if (!resp.ok) {
+            const data = await resp.json();
+            alert('Export error: ' + (data.error || 'Unknown error'));
+            return;
+        }
+        // Trigger browser download from the response blob
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const baseName = currentResult.glb_path.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+        a.href = url;
+        a.download = baseName + '.' + format;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        alert('Export failed: ' + err.message);
+    }
+};
+
+window.makeAsset = function() {
+    if (!currentResult) return;
+    alert('Asset pipeline coming next!\nFor now, your mesh files are saved at:\n' +
+          currentResult.obj_path + '\n' + currentResult.glb_path);
+};
+
+// ── Mesh Edit Chat ──────────────────────────────────────
+function chatLog(msg, type) {
+    const log = document.getElementById('chat-log');
+    const div = document.createElement('div');
+    div.className = 'chat-msg ' + type;
+    div.textContent = msg;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+}
+
+window.sendChat = async function() {
+    const input = document.getElementById('chat-input');
+    const cmd = input.value.trim();
+    if (!cmd || !currentResult) return;
+
+    input.value = '';
+    chatLog(cmd, 'user');
+
+    const sendBtn = document.getElementById('chat-send');
+    sendBtn.disabled = true;
+
+    try {
+        const resp = await fetch('/api/edit-mesh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                glb_path: currentResult.glb_path,
+                command: cmd,
+            }),
+        });
+        const data = await resp.json();
+
+        if (data.error) {
+            chatLog(data.error, 'error');
+        } else {
+            chatLog(data.message, 'system');
+
+            // Update result paths
+            currentResult.glb_path = data.glb_path;
+            currentResult.glb_url = data.glb_url;
+            if (data.obj_path) {
+                currentResult.obj_path = data.obj_path;
+                currentResult.obj_url = data.obj_url;
+            }
+
+            // Update stats
+            document.getElementById('stat-verts').textContent = data.vertices.toLocaleString();
+            document.getElementById('stat-faces').textContent = data.faces.toLocaleString();
+
+            // Reload mesh in viewer
+            window.loadGLB(data.glb_url + '?t=' + Date.now());
+        }
+    } catch (err) {
+        chatLog('Request failed: ' + err.message, 'error');
+    }
+
+    sendBtn.disabled = false;
+};
+</script>
+
+</body>
+</html>

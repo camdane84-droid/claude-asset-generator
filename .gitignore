@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+workspace/
+server.log
+.claude/
+TripoSR/
