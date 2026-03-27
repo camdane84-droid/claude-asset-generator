@@ -585,8 +585,18 @@ let particles = null;
 let particlePositions, particleTargets, particleScattered;
 let particleColors;
 let isAnimatingParticles = false;
-const PARTICLE_COUNT = 2000;
+const PARTICLE_COUNT = 3000;
 const CYCLE_DURATION = 3.0; // seconds per assemble/scatter cycle
+
+// Generation-mode particle state
+let particleMode = 'idle'; // 'idle' | 'generating' | 'finalizing'
+let particlePhases = null;  // per-particle phase offset for staggered flow
+const TRAVEL_TIME = 3.5;    // seconds for particle to reach target
+const HOLD_TIME = 1.0;      // seconds particle holds at target before respawn
+const PARTICLE_CYCLE = TRAVEL_TIME + HOLD_TIME;
+let finalizeStartTime = 0;
+const FINALIZE_CONVERGE = 1.0; // seconds for final convergence
+const FINALIZE_FADE = 1.0;     // seconds for fade out
 
 function createParticles() {
     const geo = new THREE.BufferGeometry();
@@ -675,20 +685,28 @@ function createParticles() {
 function updateParticles(time) {
     if (!particles || !isAnimatingParticles) return;
 
+    if (particleMode === 'generating') {
+        updateParticlesGenerating(time);
+    } else if (particleMode === 'finalizing') {
+        updateParticlesFinalizing(time);
+    } else {
+        updateParticlesIdle(time);
+    }
+}
+
+function updateParticlesIdle(time) {
     const cycle = time % (CYCLE_DURATION * 2);
     const assembling = cycle < CYCLE_DURATION;
     const progress = assembling
         ? cycle / CYCLE_DURATION
         : (cycle - CYCLE_DURATION) / CYCLE_DURATION;
 
-    // Smooth easing
     const ease = progress < 0.5
         ? 4 * progress * progress * progress
         : 1 - Math.pow(-2 * progress + 2, 3) / 2;
 
     for (let i = 0; i < PARTICLE_COUNT; i++) {
         const i3 = i * 3;
-        // Stagger each particle slightly for a wave effect
         const stagger = (i / PARTICLE_COUNT) * 0.3;
         const p = Math.max(0, Math.min(1, (ease - stagger) / (1 - stagger)));
 
@@ -704,13 +722,110 @@ function updateParticles(time) {
     }
 
     particles.geometry.attributes.position.needsUpdate = true;
-    // Slowly rotate the whole thing
     particles.rotation.y = time * 0.15;
+}
+
+function respawnParticle(i) {
+    const i3 = i * 3;
+    const sa = Math.random() * Math.PI * 2;
+    const sb = Math.acos(2 * Math.random() - 1);
+    const sr = 2.0 + Math.random() * 1.5;
+    particleScattered[i3] = Math.sin(sb) * Math.cos(sa) * sr;
+    particleScattered[i3 + 1] = Math.sin(sb) * Math.sin(sa) * sr;
+    particleScattered[i3 + 2] = Math.cos(sb) * sr;
+}
+
+function updateParticlesGenerating(time) {
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        const i3 = i * 3;
+        const phase = particlePhases[i];
+        const cyclePos = (time + phase) % PARTICLE_CYCLE;
+
+        if (cyclePos < TRAVEL_TIME) {
+            // Traveling inward: smoothstep easing
+            const t = cyclePos / TRAVEL_TIME;
+            const ease = t * t * (3 - 2 * t);
+            particlePositions[i3] = particleScattered[i3] + (particleTargets[i3] - particleScattered[i3]) * ease;
+            particlePositions[i3+1] = particleScattered[i3+1] + (particleTargets[i3+1] - particleScattered[i3+1]) * ease;
+            particlePositions[i3+2] = particleScattered[i3+2] + (particleTargets[i3+2] - particleScattered[i3+2]) * ease;
+        } else {
+            // Holding at target
+            particlePositions[i3] = particleTargets[i3];
+            particlePositions[i3+1] = particleTargets[i3+1];
+            particlePositions[i3+2] = particleTargets[i3+2];
+        }
+
+        // When cycle wraps, respawn at new outer position
+        const nextCyclePos = (time + phase + 0.017) % PARTICLE_CYCLE; // ~1 frame ahead
+        if (nextCyclePos < cyclePos) {
+            respawnParticle(i);
+        }
+    }
+
+    particles.geometry.attributes.position.needsUpdate = true;
+    particles.rotation.y = time * 0.06;
+}
+
+function updateParticlesFinalizing(time) {
+    const elapsed = time - finalizeStartTime;
+
+    if (elapsed < FINALIZE_CONVERGE) {
+        // Phase 1: All particles converge to wireframe (no respawning)
+        const globalT = Math.min(1, elapsed / FINALIZE_CONVERGE);
+        const globalEase = globalT * globalT * (3 - 2 * globalT);
+
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const i3 = i * 3;
+            // Each particle moves from wherever it currently is toward its target
+            // Use current position → target with increasing force
+            const cx = particlePositions[i3];
+            const cy = particlePositions[i3+1];
+            const cz = particlePositions[i3+2];
+            const pull = 0.05 + globalEase * 0.15; // accelerating pull
+            particlePositions[i3] += (particleTargets[i3] - cx) * pull;
+            particlePositions[i3+1] += (particleTargets[i3+1] - cy) * pull;
+            particlePositions[i3+2] += (particleTargets[i3+2] - cz) * pull;
+        }
+        particles.geometry.attributes.position.needsUpdate = true;
+        particles.material.opacity = 0.85;
+    } else if (elapsed < FINALIZE_CONVERGE + FINALIZE_FADE) {
+        // Phase 2: Fade particles out
+        const fadeT = (elapsed - FINALIZE_CONVERGE) / FINALIZE_FADE;
+        particles.material.opacity = 0.85 * (1 - fadeT);
+
+        // Show the final mesh with increasing opacity if it has loaded
+        if (modelGroup) {
+            modelGroup.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    child.material.transparent = true;
+                    child.material.opacity = fadeT;
+                }
+            });
+        }
+        particles.geometry.attributes.position.needsUpdate = true;
+    } else {
+        // Done — fully show mesh, hide particles
+        particles.material.opacity = 0;
+        isAnimatingParticles = false;
+        particles.visible = false;
+        particleMode = 'idle';
+
+        if (modelGroup) {
+            modelGroup.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    child.material.transparent = false;
+                    child.material.opacity = 1.0;
+                }
+            });
+        }
+    }
+    particles.rotation.y = time * 0.1;
 }
 
 function showParticles() {
     if (particles) {
         particles.visible = true;
+        particles.material.opacity = 0.85;
         isAnimatingParticles = true;
     }
     document.getElementById('viewport-hint').style.display = 'none';
@@ -718,7 +833,111 @@ function showParticles() {
 
 function hideParticles() {
     isAnimatingParticles = false;
-    if (particles) particles.visible = false;
+    particleMode = 'idle';
+    if (particles) {
+        particles.visible = false;
+        particles.material.opacity = 0.85;
+    }
+}
+
+function startGenerationParticles() {
+    particleMode = 'generating';
+
+    // Initialize per-particle phase offsets for staggered continuous flow
+    particlePhases = new Float32Array(PARTICLE_COUNT);
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        particlePhases[i] = Math.random() * PARTICLE_CYCLE;
+        respawnParticle(i);
+    }
+
+    // Remove any existing mesh during generation
+    if (modelGroup) { scene.remove(modelGroup); modelGroup = null; }
+    currentMesh = null;
+    wireframeMesh = null;
+
+    if (particles) {
+        particles.visible = true;
+        particles.material.opacity = 0.85;
+        isAnimatingParticles = true;
+    }
+    document.getElementById('viewport-hint').style.display = 'none';
+    document.getElementById('view-mode-toggle').style.display = 'none';
+}
+
+function extractWireframeTargets(url) {
+    const loader = new GLTFLoader();
+    loader.load(url, (gltf) => {
+        const model = gltf.scene;
+        model.updateMatrixWorld(true);
+
+        let geo = null;
+        model.traverse((child) => {
+            if (child.isMesh && !geo) {
+                geo = child.geometry.clone();
+                geo.applyMatrix4(child.matrixWorld);
+            }
+        });
+        if (!geo) return;
+
+        // Center and scale — same logic as loadGLB
+        geo.computeBoundingBox();
+        const box = geo.boundingBox;
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const scaleFactor = 2.0 / maxDim;
+        geo.translate(-center.x, -center.y, -center.z);
+        geo.scale(scaleFactor, scaleFactor, scaleFactor);
+
+        // Extract wireframe edge segments
+        const wireGeo = new THREE.WireframeGeometry(geo);
+        const positions = wireGeo.attributes.position.array;
+        const edgeCount = positions.length / 6; // 2 verts per edge × 3 components
+
+        if (edgeCount === 0) { wireGeo.dispose(); geo.dispose(); return; }
+
+        // Sample points along wireframe edges as particle targets
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const i3 = i * 3;
+            const edgeIdx = Math.floor(Math.random() * edgeCount);
+            const e6 = edgeIdx * 6;
+            const t = Math.random();
+            particleTargets[i3] = positions[e6] + (positions[e6 + 3] - positions[e6]) * t;
+            particleTargets[i3 + 1] = positions[e6 + 1] + (positions[e6 + 4] - positions[e6 + 1]) * t;
+            particleTargets[i3 + 2] = positions[e6 + 2] + (positions[e6 + 5] - positions[e6 + 2]) * t;
+        }
+
+        wireGeo.dispose();
+        geo.dispose();
+    });
+}
+
+function transitionToFinalMesh(url) {
+    // Start the finalize phase — particles converge then fade
+    particleMode = 'finalizing';
+    finalizeStartTime = clock.getElapsedTime();
+
+    // Load the final mesh — it will be hidden initially.
+    // We patch loadGLB's callback behavior by loading after a brief delay
+    // so the converge phase plays first, then the mesh fades in.
+    setTimeout(() => {
+        loadGLB(url);
+        // After loadGLB's async callback fires, hide the mesh so fade-in controls it
+        // Poll briefly for modelGroup to exist
+        const hideCheck = setInterval(() => {
+            if (modelGroup) {
+                clearInterval(hideCheck);
+                modelGroup.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        child.material.transparent = true;
+                        child.material.opacity = 0;
+                    }
+                });
+            }
+        }, 50);
+        // Safety: stop polling after 3s
+        setTimeout(() => clearInterval(hideCheck), 3000);
+    }, FINALIZE_CONVERGE * 800); // Load mesh slightly before converge ends
 }
 
 // ── Scene Init ──────────────────────────────────────────
@@ -886,31 +1105,69 @@ function loadGLB(url) {
         modelGroup.position.set(0, 0, 0);
 
         // ── Solid mesh ──────────────────────────────────
-        // Use the material from the GLB if it has a texture (from our
-        // bake step), otherwise fall back to vertex colors or gray.
+        // Use the material from the GLB if it has a baked texture.
+        // Otherwise, project the original uploaded image onto the mesh
+        // using orthographic front-projection UVs (avoids shattered
+        // vertex-color look from marching cubes).
         const loadedMat = meshes[0].material;
         let solidMat;
 
         if (loadedMat && loadedMat.map) {
             // GLB has a baked texture — use it directly
             solidMat = loadedMat.clone();
-            solidMat.side = THREE.DoubleSide;
+            solidMat.side = THREE.FrontSide;
             solidMat.metalness = 0.1;
             solidMat.roughness = 0.7;
-        } else if (mainGeo.attributes.color) {
-            solidMat = new THREE.MeshStandardMaterial({
-                vertexColors: true,
-                metalness: 0.1,
-                roughness: 0.7,
-                side: THREE.DoubleSide,
-            });
+            solidMat.transparent = false;
+            solidMat.opacity = 1.0;
+            solidMat.depthWrite = true;
+            solidMat.depthTest = true;
         } else {
-            solidMat = new THREE.MeshStandardMaterial({
-                color: 0x888888,
-                metalness: 0.1,
-                roughness: 0.7,
-                side: THREE.DoubleSide,
-            });
+            // No embedded texture — project original image onto mesh
+            // Compute front-projection UVs from the centered/scaled geometry
+            mainGeo.computeBoundingBox();
+            const uvBox = mainGeo.boundingBox;
+            const xRange = (uvBox.max.x - uvBox.min.x) || 1;
+            const yRange = (uvBox.max.y - uvBox.min.y) || 1;
+            const posArr = mainGeo.attributes.position.array;
+            const vertCount = posArr.length / 3;
+            const uvArr = new Float32Array(vertCount * 2);
+
+            for (let vi = 0; vi < vertCount; vi++) {
+                const x = posArr[vi * 3];
+                const y = posArr[vi * 3 + 1];
+                uvArr[vi * 2]     = (x - uvBox.min.x) / xRange;
+                uvArr[vi * 2 + 1] = (y - uvBox.min.y) / yRange;
+            }
+            mainGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvArr, 2));
+
+            // Load the original uploaded image as a texture
+            const previewSrc = document.getElementById('preview-img')?.src;
+            if (previewSrc) {
+                const tex = new THREE.TextureLoader().load(previewSrc);
+                tex.colorSpace = THREE.SRGBColorSpace;
+                tex.minFilter = THREE.LinearFilter;
+                tex.magFilter = THREE.LinearFilter;
+                solidMat = new THREE.MeshStandardMaterial({
+                    map: tex,
+                    metalness: 0.1,
+                    roughness: 0.7,
+                    side: THREE.FrontSide,
+                    transparent: false,
+                    depthWrite: true,
+                    depthTest: true,
+                });
+            } else {
+                solidMat = new THREE.MeshStandardMaterial({
+                    color: 0x888888,
+                    metalness: 0.1,
+                    roughness: 0.7,
+                    side: THREE.FrontSide,
+                    transparent: false,
+                    depthWrite: true,
+                    depthTest: true,
+                });
+            }
         }
         mainGeo.computeVertexNormals();
         const solidMesh = new THREE.Mesh(mainGeo, solidMat);
@@ -935,11 +1192,13 @@ function loadGLB(url) {
         camera.position.set(0, 0.5, 2.5);
         controls.update();
 
-        // Show viewport controls
+        // Show viewport controls (unless finalizing — transition handles that)
         document.getElementById('viewport-hint').style.display = 'none';
-        document.getElementById('view-mode-toggle').style.display = 'flex';
-        document.getElementById('snap-controls').style.display = 'flex';
-        document.getElementById('viewport-controls').style.display = 'flex';
+        if (particleMode !== 'finalizing') {
+            document.getElementById('view-mode-toggle').style.display = 'flex';
+            document.getElementById('snap-controls').style.display = 'flex';
+            document.getElementById('viewport-controls').style.display = 'flex';
+        }
     },
     undefined,
     (error) => {
@@ -1007,6 +1266,9 @@ function snapToPlane(view) {
 window.loadGLB = loadGLB;
 window.showParticles = showParticles;
 window.hideParticles = hideParticles;
+window.startGenerationParticles = startGenerationParticles;
+window.extractWireframeTargets = extractWireframeTargets;
+window.transitionToFinalMesh = transitionToFinalMesh;
 window.snapToPlane = snapToPlane;
 
 // Init
@@ -1121,10 +1383,11 @@ window.generateMesh = async function() {
     progressBar.style.display = 'block';
     progressText.textContent = 'Starting...';
 
-    // Hide previous results, show particle animation
+    // Hide previous results, start generation particle animation
     document.getElementById('mesh-stats').style.display = 'none';
     document.getElementById('export-section').style.display = 'none';
-    window.showParticles();
+    document.getElementById('chat-section').style.display = 'none';
+    window.startGenerationParticles();
 
     try {
         const resp = await fetch('/api/generate', {
@@ -1148,19 +1411,19 @@ window.generateMesh = async function() {
 
             progressText.textContent = status.progress;
 
-            // Check for new progressive mesh
+            // Check for new progressive mesh — update particle wireframe targets
             if (status.progressive_version > lastProgressiveVersion) {
                 const latest = status.progressive[status.progressive.length - 1];
                 lastProgressiveVersion = status.progressive_version;
 
-                // Hide particles, load the progressive mesh
-                window.hideParticles();
-                window.loadGLB(latest.glb_url + '?t=' + Date.now());
+                // Extract wireframe from progressive mesh as new particle targets
+                // Particles keep flowing, just toward the refined wireframe shape
+                window.extractWireframeTargets(latest.glb_url + '?t=' + Date.now());
 
                 // Update stats live
                 document.getElementById('mesh-stats').style.display = 'block';
                 document.getElementById('stat-verts').textContent =
-                    latest.vertices.toLocaleString() + (status.status !== 'done' ? ' (refining...)' : '');
+                    latest.vertices.toLocaleString() + ' (refining...)';
                 document.getElementById('stat-faces').textContent =
                     latest.faces.toLocaleString();
                 document.getElementById('stat-time').textContent = '...';
@@ -1189,8 +1452,8 @@ window.generateMesh = async function() {
 function onGenerationComplete(result) {
     currentResult = result;
 
-    // Stop particles
-    window.hideParticles();
+    // Transition: particles converge to final wireframe, then fade as mesh appears
+    window.transitionToFinalMesh(result.glb_url + '?t=' + Date.now());
 
     // Update UI
     document.getElementById('generate-btn').disabled = false;
@@ -1203,12 +1466,13 @@ function onGenerationComplete(result) {
     document.getElementById('stat-faces').textContent = result.faces.toLocaleString();
     document.getElementById('stat-time').textContent = result.elapsed + 's';
 
-    // Show export section + chat
-    document.getElementById('export-section').style.display = 'block';
-    document.getElementById('chat-section').style.display = 'block';
-
-    // Load mesh in viewer
-    window.loadGLB(result.glb_url + '?t=' + Date.now());
+    // Show export section + chat after transition completes
+    setTimeout(() => {
+        document.getElementById('export-section').style.display = 'block';
+        document.getElementById('chat-section').style.display = 'block';
+        document.getElementById('view-mode-toggle').style.display = 'flex';
+        document.getElementById('viewport-controls').style.display = 'flex';
+    }, (1.0 + 1.0) * 1000); // FINALIZE_CONVERGE + FINALIZE_FADE
 }
 
 // ── Export ───────────────────────────────────────────────
