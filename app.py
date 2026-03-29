@@ -550,59 +550,72 @@ def _run_generation(job_id, image_path, filename, settings):
         # Step 4b: Apply base point repositioning if specified
         base_point = settings.get("base_point")
 
-        # Step 5: Bake texture from original image onto mesh
-        jobs[job_id]["progress"] = "Baking image texture onto mesh..."
+        # Step 5: Bake neural texture and export final mesh
+        jobs[job_id]["progress"] = "Baking neural texture (2048x2048)..."
         import trimesh as _trimesh
+        from PIL import Image as PILImage
 
-        # Clone mesh for texturing (before orientation fix)
-        tex_mesh = _trimesh.Trimesh(
-            vertices=final_mesh.vertices.copy(),
-            faces=final_mesh.faces.copy(),
-            vertex_colors=final_mesh.visual.vertex_colors.copy() if hasattr(final_mesh.visual, 'vertex_colors') else None,
-        )
-
-        # Determine texture resolution based on quality
-        tex_res_map = {"low": 1024, "medium": 2048, "high": 2048}
-        tex_res = tex_res_map.get(
-            next((k for k, v in {
-                "low": {"mc_resolution": 128},
-                "medium": {"mc_resolution": 256},
-                "high": {"mc_resolution": 512},
-            }.items() if v["mc_resolution"] == settings["mc_resolution"]), "medium"),
-            2048,
-        )
+        glb_filename = f"{base_name}_3d.glb"
+        obj_filename = f"{base_name}_3d.obj"
+        glb_path = os.path.join(WORK_DIR, glb_filename)
+        obj_path = os.path.join(WORK_DIR, obj_filename)
 
         try:
-            textured_mesh, texture_img = _bake_projected_texture(
-                tex_mesh, image_path, texture_resolution=tex_res
-            )
-            _fix_orientation(textured_mesh)
-            _apply_base_point(textured_mesh, base_point, image_path)
+            from tsr.bake_texture import bake_texture
 
-            # Save texture image
+            texture_result = bake_texture(
+                final_mesh, model, scene_codes[0],
+                texture_resolution=2048,
+            )
+
+            vmapping = texture_result["vmapping"]
+            indices = texture_result["indices"]
+            uvs = texture_result["uvs"]
+            colors_rgba = texture_result["colors"]
+
+            # Convert float RGBA to uint8 RGB image
+            # Flip vertically: OpenGL framebuffer origin is bottom-left
+            colors_rgb = (np.clip(colors_rgba[:, :, :3], 0, 1) * 255).astype(np.uint8)
+            texture_img = PILImage.fromarray(np.flipud(colors_rgb))
+
+            # Save texture for debugging/export
             tex_filename = f"{base_name}_3d_texture.png"
             tex_path = os.path.join(WORK_DIR, tex_filename)
             texture_img.save(tex_path)
 
-            # Export GLB with texture
-            glb_filename = f"{base_name}_3d.glb"
-            glb_path = os.path.join(WORK_DIR, glb_filename)
+            # Build mesh with xatlas-remapped vertices/faces
+            new_vertices = final_mesh.vertices[vmapping]
+            textured_mesh = _trimesh.Trimesh(
+                vertices=new_vertices,
+                faces=indices,
+                process=False,
+            )
+
+            # Apply PBR material with baked texture
+            material = _trimesh.visual.material.PBRMaterial(
+                baseColorTexture=texture_img,
+                metallicFactor=0.0,
+                roughnessFactor=0.7,
+            )
+            textured_mesh.visual = _trimesh.visual.TextureVisuals(
+                uv=uvs, material=material
+            )
+
+            _fix_orientation(textured_mesh)
+            _apply_base_point(textured_mesh, base_point, image_path)
+
             textured_mesh.export(glb_path)
-
-            # Also export OBJ (with texture reference)
-            obj_filename = f"{base_name}_3d.obj"
-            obj_path = os.path.join(WORK_DIR, obj_filename)
             textured_mesh.export(obj_path)
-
             final_verts = len(textured_mesh.vertices)
             final_faces = len(textured_mesh.faces)
+            print(f"  [Texture] Neural texture bake complete: {final_verts} verts, {final_faces} faces")
 
         except Exception as tex_err:
-            print(f"  [Texture] Baking failed, falling back to vertex colors: {tex_err}")
+            print(f"  [Texture] Neural bake failed ({tex_err}), falling back to vertex colors")
             import traceback
             traceback.print_exc()
 
-            # Fallback: export with vertex colors
+            # Fallback: export with vertex colors only
             fallback = _trimesh.Trimesh(
                 vertices=final_mesh.vertices.copy(),
                 faces=final_mesh.faces.copy(),
@@ -610,15 +623,15 @@ def _run_generation(job_id, image_path, filename, settings):
             )
             _fix_orientation(fallback)
             _apply_base_point(fallback, base_point, image_path)
-
-            glb_filename = f"{base_name}_3d.glb"
-            obj_filename = f"{base_name}_3d.obj"
-            glb_path = os.path.join(WORK_DIR, glb_filename)
-            obj_path = os.path.join(WORK_DIR, obj_filename)
             fallback.export(glb_path)
             fallback.export(obj_path)
             final_verts = len(fallback.vertices)
             final_faces = len(fallback.faces)
+
+        # Free GPU memory
+        del model, scene_codes
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         elapsed = time.time() - jobs[job_id]["started"]
 

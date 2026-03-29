@@ -1105,69 +1105,24 @@ function loadGLB(url) {
         modelGroup.position.set(0, 0, 0);
 
         // ── Solid mesh ──────────────────────────────────
-        // Use the material from the GLB if it has a baked texture.
-        // Otherwise, project the original uploaded image onto the mesh
-        // using orthographic front-projection UVs (avoids shattered
-        // vertex-color look from marching cubes).
+        // Use the material from the GLB (neural-baked texture or vertex colors)
         const loadedMat = meshes[0].material;
         let solidMat;
-
         if (loadedMat && loadedMat.map) {
-            // GLB has a baked texture — use it directly
-            solidMat = loadedMat.clone();
-            solidMat.side = THREE.FrontSide;
-            solidMat.metalness = 0.1;
-            solidMat.roughness = 0.7;
-            solidMat.transparent = false;
-            solidMat.opacity = 1.0;
-            solidMat.depthWrite = true;
-            solidMat.depthTest = true;
+            // GLB has a neural-baked texture — use it
+            solidMat = new THREE.MeshStandardMaterial({
+                map: loadedMat.map,
+                metalness: 0.0,
+                roughness: 0.7,
+                side: THREE.DoubleSide,
+            });
         } else {
-            // No embedded texture — project original image onto mesh
-            // Compute front-projection UVs from the centered/scaled geometry
-            mainGeo.computeBoundingBox();
-            const uvBox = mainGeo.boundingBox;
-            const xRange = (uvBox.max.x - uvBox.min.x) || 1;
-            const yRange = (uvBox.max.y - uvBox.min.y) || 1;
-            const posArr = mainGeo.attributes.position.array;
-            const vertCount = posArr.length / 3;
-            const uvArr = new Float32Array(vertCount * 2);
-
-            for (let vi = 0; vi < vertCount; vi++) {
-                const x = posArr[vi * 3];
-                const y = posArr[vi * 3 + 1];
-                uvArr[vi * 2]     = (x - uvBox.min.x) / xRange;
-                uvArr[vi * 2 + 1] = (y - uvBox.min.y) / yRange;
-            }
-            mainGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvArr, 2));
-
-            // Load the original uploaded image as a texture
-            const previewSrc = document.getElementById('preview-img')?.src;
-            if (previewSrc) {
-                const tex = new THREE.TextureLoader().load(previewSrc);
-                tex.colorSpace = THREE.SRGBColorSpace;
-                tex.minFilter = THREE.LinearFilter;
-                tex.magFilter = THREE.LinearFilter;
-                solidMat = new THREE.MeshStandardMaterial({
-                    map: tex,
-                    metalness: 0.1,
-                    roughness: 0.7,
-                    side: THREE.FrontSide,
-                    transparent: false,
-                    depthWrite: true,
-                    depthTest: true,
-                });
-            } else {
-                solidMat = new THREE.MeshStandardMaterial({
-                    color: 0x888888,
-                    metalness: 0.1,
-                    roughness: 0.7,
-                    side: THREE.FrontSide,
-                    transparent: false,
-                    depthWrite: true,
-                    depthTest: true,
-                });
-            }
+            // Fallback: vertex colors or plain gray
+            solidMat = new THREE.MeshStandardMaterial({
+                vertexColors: !!mainGeo.attributes.color,
+                color: mainGeo.attributes.color ? 0xffffff : 0x888888,
+                side: THREE.DoubleSide,
+            });
         }
         mainGeo.computeVertexNormals();
         const solidMesh = new THREE.Mesh(mainGeo, solidMat);
